@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/luraproject/lura/v2/config"
-	"github.com/luraproject/lura/v2/logging"
-	"github.com/luraproject/lura/v2/proxy"
-	router "github.com/luraproject/lura/v2/router/gin"
+	"github.com/luraproject/lura/config"
+	"github.com/luraproject/lura/logging"
+	"github.com/luraproject/lura/proxy"
+	router "github.com/luraproject/lura/router/gin"
 )
 
 // Config holds the configuration for SSE endpoints
