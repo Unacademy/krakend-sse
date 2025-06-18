@@ -1,4 +1,4 @@
-module github.com/Harsh-Naicker/krakend-sse
+module github.com/unacademy/krakend-sse
 
 go 1.24.1
 
