@@ -41,3 +41,7 @@ require (
 replace github.com/luraproject/lura v1.4.1 => github.com/Unacademy/krakend v1.4.1
 
 replace github.com/ugorji/go v0.0.0-20180112141927-9831f2c3ac10 => github.com/ugorji/go v1.2.12
+
+replace github.com/pelletier/go-toml/v2 v2.2.2 => github.com/pelletier/go-toml/v2 v2.0.8
+
+replace golang.org/x/net v0.25.0 => golang.org/x/net v0.5.0
