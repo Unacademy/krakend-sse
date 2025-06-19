@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/luraproject/lura/v2/config"
-	"github.com/luraproject/lura/v2/logging"
-	"github.com/luraproject/lura/v2/proxy"
-	router "github.com/luraproject/lura/v2/router/gin"
+	"github.com/luraproject/lura/config"
+	"github.com/luraproject/lura/logging"
+	"github.com/luraproject/lura/proxy"
+	router "github.com/luraproject/lura/router/gin"
 )
 
 // Config holds the configuration for SSE endpoints
@@ -28,6 +28,11 @@ type Config struct {
 type HandlerFactory struct {
 	logger logging.Logger
 }
+
+// Define custom context key type for Gin v1.7.7 compatibility
+type contextKey string
+
+const ginContextKey contextKey = "gin-context"
 
 // NewHandlerFactory returns a new SSE HandlerFactory
 func NewHandlerFactory(logger logging.Logger) *HandlerFactory {
@@ -43,25 +48,36 @@ func (s *HandlerFactory) HandlerWrapper(standardHandlerFactory router.HandlerFac
 
 		// Check if this is an SSE endpoint
 		if _, ok := cfg.ExtraConfig["sse"]; ok {
-			// Create middleware chain for auth/validation/metrics but with a noop endpoint
-			// This applies all middleware but doesn't actually process the request
-			validateHandler := standardHandlerFactory(cfg, func(ctx context.Context, _ *proxy.Request) (*proxy.Response, error) {
-				// Store the raw body in the context for the SSE handler to use
-				if c, ok := ctx.Value(gin.ContextKey).(*gin.Context); ok {
-					// Get the raw body from the request
-					if body, err := io.ReadAll(c.Request.Body); err == nil {
-						// Restore the body for downstream handlers
-						c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-						// Store the raw body for the SSE handler
-						c.Set("rawBody", body)
-					}
-				}
-				// Return nil to signal that processing should continue
-				return nil, nil
-			})
-
-			// Create combined handler that runs middleware chain first, then SSE handler
+			// For SSE endpoints, we need to handle the request differently
 			return func(c *gin.Context) {
+				// Read and store the body FIRST, before any middleware processes it
+				var bodyBytes []byte
+				if c.Request.Body != nil {
+					var err error
+					bodyBytes, err = io.ReadAll(c.Request.Body)
+					if err != nil {
+						s.logger.Error("Error reading request body:", err)
+						c.JSON(http.StatusBadRequest, gin.H{"error": "Error reading request body"})
+						return
+					}
+					// Restore the body for downstream handlers
+					c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				}
+
+				// Store the raw body for the SSE handler
+				c.Set("rawBody", bodyBytes)
+
+				// Add Gin context to the request context for middleware compatibility
+				ctx := context.WithValue(c.Request.Context(), ginContextKey, c)
+				c.Request = c.Request.WithContext(ctx)
+
+				// Create middleware chain for auth/validation/metrics but with a noop endpoint
+				validateHandler := standardHandlerFactory(cfg, func(ctx context.Context, _ *proxy.Request) (*proxy.Response, error) {
+					// Just return nil to signal that processing should continue
+					// The body is already stored in the Gin context
+					return nil, nil
+				})
+
 				// Run middleware chain for validation/auth/etc.
 				validateHandler(c)
 
