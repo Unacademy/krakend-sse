@@ -29,6 +29,11 @@ type HandlerFactory struct {
 	logger logging.Logger
 }
 
+// Define custom context key type for Gin v1.7.7 compatibility
+type contextKey string
+
+const ginContextKey contextKey = "gin-context"
+
 // NewHandlerFactory returns a new SSE HandlerFactory
 func NewHandlerFactory(logger logging.Logger) *HandlerFactory {
 	return &HandlerFactory{
@@ -47,7 +52,7 @@ func (s *HandlerFactory) HandlerWrapper(standardHandlerFactory router.HandlerFac
 			// This applies all middleware but doesn't actually process the request
 			validateHandler := standardHandlerFactory(cfg, func(ctx context.Context, _ *proxy.Request) (*proxy.Response, error) {
 				// Store the raw body in the context for the SSE handler to use
-				if c, ok := ctx.Value(gin.ContextKey).(*gin.Context); ok {
+				if c, ok := ctx.Value(ginContextKey).(*gin.Context); ok {
 					// Get the raw body from the request
 					if body, err := io.ReadAll(c.Request.Body); err == nil {
 						// Restore the body for downstream handlers
@@ -62,6 +67,10 @@ func (s *HandlerFactory) HandlerWrapper(standardHandlerFactory router.HandlerFac
 
 			// Create combined handler that runs middleware chain first, then SSE handler
 			return func(c *gin.Context) {
+				// Add Gin context to the request context for middleware compatibility
+				ctx := context.WithValue(c.Request.Context(), ginContextKey, c)
+				c.Request = c.Request.WithContext(ctx)
+
 				// Run middleware chain for validation/auth/etc.
 				validateHandler(c)
 
