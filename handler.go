@@ -132,9 +132,8 @@ func (s *HandlerFactory) setupSSEConnection(c *gin.Context, cfg *config.Endpoint
 		sseCfg.RetryInterval = 1000
 	}
 
-	// Send retry interval
-	c.Writer.WriteString("retry: " + strconv.Itoa(sseCfg.RetryInterval) + "\n\n")
-	c.Writer.Flush()
+	// Don't send retry interval here - let the backend handle initial messages
+	// The retry interval will be sent as part of the streamed response if needed
 
 	return sseCfg
 }
@@ -277,18 +276,19 @@ func (s *HandlerFactory) setupSSEConnectionAndStream(c *gin.Context, cfg *config
 	// Set up the SSE connection
 	sseCfg := s.setupSSEConnection(c, cfg)
 
-	// Start keep-alive mechanism
+	// Check response status first
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Warning(fmt.Sprintf("Backend returned non-200 status: %d", resp.StatusCode))
+		fmt.Fprintf(c.Writer, "event: error\ndata: {\"message\":\"Backend returned status %d\"}\n\n", resp.StatusCode)
+		c.Writer.Flush()
+		return
+	}
+
+	// Start keep-alive mechanism only after we start streaming
 	_, keepAliveCancel := s.startKeepAlive(c, sseCfg)
 	defer keepAliveCancel()
 
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		s.logger.Warning(fmt.Sprintf("Backend returned non-200 status: %d", resp.StatusCode))
-		fmt.Fprintf(c.Writer, "event: warning\ndata: {\"message\":\"Backend returned status %d\"}\n\n", resp.StatusCode)
-		c.Writer.Flush()
-	}
-
-	// Stream the response
+	// Stream the response directly without any initial messages
 	s.streamResponse(c, resp)
 }
 
