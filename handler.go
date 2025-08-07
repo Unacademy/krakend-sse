@@ -180,11 +180,11 @@ func (s *HandlerFactory) processBackendRequest(c *gin.Context, cfg *config.Endpo
 	}
 
 	// Continue with request processing
-	s.prepareAndExecuteRequest(c, *backendConfig)
+	s.prepareAndExecuteRequest(c, cfg, *backendConfig)
 }
 
 // prepareAndExecuteRequest prepares and executes the backend request
-func (s *HandlerFactory) prepareAndExecuteRequest(c *gin.Context, backendConfig config.Backend) {
+func (s *HandlerFactory) prepareAndExecuteRequest(c *gin.Context, cfg *config.EndpointConfig, backendConfig config.Backend) {
 	// Construct the backend URL
 	backendURL := fmt.Sprintf("%s%s", backendConfig.Host[0], backendConfig.URLPattern)
 	s.logger.Debug(fmt.Sprintf("SSE backend URL: %s", backendURL))
