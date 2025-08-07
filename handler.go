@@ -100,14 +100,7 @@ func (s *HandlerFactory) HandlerWrapper(standardHandlerFactory router.HandlerFac
 // NewHandler creates a new SSE handler
 func (s *HandlerFactory) NewHandler(cfg *config.EndpointConfig, _ proxy.Proxy) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Set up the SSE connection
-		sseCfg := s.setupSSEConnection(c, cfg)
-
-		// Start keep-alive mechanism
-		_, keepAliveCancel := s.startKeepAlive(c, sseCfg)
-		defer keepAliveCancel()
-
-		// Validate backend configuration and proceed with request if valid
+		// First, make the backend request to determine response type
 		s.processBackendRequest(c, cfg)
 	}
 }
@@ -209,7 +202,7 @@ func (s *HandlerFactory) prepareAndExecuteRequest(c *gin.Context, backendConfig 
 	}
 
 	// Execute request and process response
-	s.executeRequestAndHandleResponse(c, req)
+	s.executeRequestAndHandleResponse(c, req, cfg)
 }
 
 // getRequestBody extracts the request body from the context
@@ -249,7 +242,7 @@ func (s *HandlerFactory) createRequest(c *gin.Context, backendConfig config.Back
 }
 
 // executeRequestAndHandleResponse executes the request and handles the response
-func (s *HandlerFactory) executeRequestAndHandleResponse(c *gin.Context, req *http.Request) {
+func (s *HandlerFactory) executeRequestAndHandleResponse(c *gin.Context, req *http.Request, cfg *config.EndpointConfig) {
 	// Create a new HTTP client
 	client := &http.Client{
 		Timeout: 0, // No timeout for streaming connections
@@ -259,11 +252,34 @@ func (s *HandlerFactory) executeRequestAndHandleResponse(c *gin.Context, req *ht
 	resp, err := client.Do(req)
 	if err != nil {
 		s.logger.Error("Error making backend request:", err)
-		fmt.Fprintf(c.Writer, "event: warning\ndata: {\"message\":\"Error making request: %s\"}\n\n", err)
-		c.Writer.Flush()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error making request"})
 		return
 	}
 	defer resp.Body.Close()
+
+	// Determine response type based on Content-Type header
+	contentType := resp.Header.Get("Content-Type")
+	isSSEResponse := (contentType == "text/event-stream" || contentType == "text/plain")
+
+	s.logger.Debug(fmt.Sprintf("Backend response Content-Type: %s, treating as SSE: %v", contentType, isSSEResponse))
+
+	if isSSEResponse {
+		// Set up SSE connection and stream the response
+		s.setupSSEConnectionAndStream(c, cfg, resp)
+	} else {
+		// Handle as regular JSON response
+		s.handleJSONResponse(c, resp)
+	}
+}
+
+// setupSSEConnectionAndStream sets up SSE connection and streams the response
+func (s *HandlerFactory) setupSSEConnectionAndStream(c *gin.Context, cfg *config.EndpointConfig, resp *http.Response) {
+	// Set up the SSE connection
+	sseCfg := s.setupSSEConnection(c, cfg)
+
+	// Start keep-alive mechanism
+	_, keepAliveCancel := s.startKeepAlive(c, sseCfg)
+	defer keepAliveCancel()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
@@ -272,8 +288,32 @@ func (s *HandlerFactory) executeRequestAndHandleResponse(c *gin.Context, req *ht
 		c.Writer.Flush()
 	}
 
-	// Process the response stream
+	// Stream the response
 	s.streamResponse(c, resp)
+}
+
+// handleJSONResponse handles regular JSON responses
+func (s *HandlerFactory) handleJSONResponse(c *gin.Context, resp *http.Response) {
+	// Copy response headers (except content-length which will be recalculated)
+	for k, v := range resp.Header {
+		if k != "Content-Length" {
+			c.Header(k, v[0])
+		}
+	}
+
+	// Set the status code
+	c.Status(resp.StatusCode)
+
+	// Copy the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		s.logger.Error("Error reading response body:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response"})
+		return
+	}
+
+	// Write the body directly to maintain original formatting
+	c.Writer.Write(body)
 }
 
 // streamResponse streams the response to the client
